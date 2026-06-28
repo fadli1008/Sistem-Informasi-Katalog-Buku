@@ -2,7 +2,7 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 import hashlib
-from datetime import datetime, timedelta # TAMBAHAN: Perlu timedelta untuk kalkulasi tanggal (+7 hari)
+from datetime import datetime, timedelta
 import time
 import base64
 
@@ -19,20 +19,17 @@ st.set_page_config(
 # INJEKSI CUSTOM CSS UNTUK UI/UX MODERN & RESPONSIF
 st.markdown("""
     <style>
-    /* Import Font Modern (Inter) */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
     
     html, body, [class*="css"] {
         font-family: 'Inter', sans-serif;
     }
     
-    /* Menyembunyikan elemen bawaan tanpa mengganggu tombol navigasi sidebar */
     .stDeployButton {display:none;}
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {background-color: transparent !important;}
     
-    /* Custom Title - Responsif & Posisi Tengah */
     .main-title {
         font-size: clamp(1.8rem, 3.5vw, 2.8rem); 
         font-weight: 800;
@@ -54,7 +51,6 @@ st.markdown("""
         margin-bottom: 2.5rem;
     }
     
-    /* Styling Tombol Primary */
     div.stButton > button:first-child {
         background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
         color: white;
@@ -71,7 +67,6 @@ st.markdown("""
         background: linear-gradient(135deg, #0369a1 0%, #0f172a 100%);
     }
     
-    /* Styling Container / Card */
     div[data-testid="stVerticalBlock"] > div[style*="border"] {
         border-radius: 12px !important;
         border: 1px solid #e2e8f0 !important;
@@ -85,7 +80,6 @@ st.markdown("""
         box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important;
     }
     
-    /* Styling Metrik */
     [data-testid="stMetricValue"] {
         font-size: 2.5rem !important;
         font-weight: 800 !important;
@@ -97,7 +91,6 @@ st.markdown("""
         font-weight: 600 !important;
     }
     
-    /* Tabel Header */
     thead tr th {
         background-color: #f8fafc !important;
         color: #334155 !important;
@@ -105,7 +98,6 @@ st.markdown("""
         font-size: 0.95rem !important;
     }
     
-    /* Sidebar Styling */
     [data-testid="stSidebar"] {
         background-color: #f8fafc;
         border-right: 1px solid #e2e8f0;
@@ -119,6 +111,8 @@ st.markdown("""
 def init_db():
     conn = sqlite3.connect('perpustakaan.db', check_same_thread=False)
     c = conn.cursor()
+    
+    # PERUBAHAN: Menambahkan kolom deskripsi pada CREATE TABLE awal
     c.execute('''
         CREATE TABLE IF NOT EXISTS buku (
             id_buku INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,7 +121,8 @@ def init_db():
             pengarang TEXT NOT NULL,
             kategori TEXT NOT NULL,
             tahun INTEGER NOT NULL,
-            status TEXT NOT NULL
+            status TEXT NOT NULL,
+            deskripsi TEXT
         )
     ''')
     c.execute('''
@@ -164,6 +159,10 @@ def init_db():
     try:
         c.execute("ALTER TABLE peminjaman ADD COLUMN denda INTEGER DEFAULT 0")
     except sqlite3.OperationalError: pass
+    # PERUBAHAN: Migrasi kolom deskripsi untuk database yang sudah ada sebelumnya
+    try:
+        c.execute("ALTER TABLE buku ADD COLUMN deskripsi TEXT")
+    except sqlite3.OperationalError: pass
         
     c.execute("SELECT * FROM admin WHERE username='admin'")
     if not c.fetchone():
@@ -178,7 +177,6 @@ for key in ['role', 'username', 'nama']:
     if key not in st.session_state:
         st.session_state[key] = None
 
-# Ambil string tanggal hari ini untuk komparasi jatuh tempo
 tgl_hari_ini = datetime.now().strftime("%Y-%m-%d")
 
 # ==========================================
@@ -222,7 +220,6 @@ with st.sidebar:
             st.session_state.update({'role': None, 'username': None, 'nama': None})
             st.rerun()
 
-# Menampilkan Judul Utama (Posisi Tengah & Responsif)
 st.markdown('<div class="main-title">Sistem Informasi Katalog & Peminjaman Buku</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-title">Eksplorasi, pinjam, dan kelola literatur perpustakaan dengan mudah.</div>', unsafe_allow_html=True)
 
@@ -237,10 +234,10 @@ if menu == "🔍 Katalog Buku":
         with c2:
             kategori_filter = st.selectbox("Filter Kategori", ["Semua Kategori", "Pelajaran", "Referensi", "Literatur Umum"], label_visibility="collapsed")
             
-    # PERUBAHAN: Query join dengan peminjaman aktif untuk mendeteksi status "Terlambat" secara otomatis
+    # PERUBAHAN: Menambahkan b.deskripsi ke dalam query pemanggilan
     query = f'''
         SELECT b.id_buku as ID, b.cover_url as 'Sampul', b.judul as 'Judul Buku', b.pengarang as 'Pengarang', 
-               b.kategori as 'Kategori', b.tahun as 'Tahun', 
+               b.kategori as 'Kategori', b.tahun as 'Tahun', b.deskripsi as 'Deskripsi',
                CASE 
                     WHEN b.status = 'Dipinjam' AND p.tanggal_jatuh_tempo < '{tgl_hari_ini}' THEN 'Terlambat'
                     ELSE b.status 
@@ -277,7 +274,7 @@ if menu == "🔍 Katalog Buku":
                         badge_color = "#f59e0b"
                         badge_text = "Diproses"
                     elif status_val == 'Terlambat':
-                        badge_color = "#ef4444" # Badge Merah menyala khusus terlambat
+                        badge_color = "#ef4444"
                         badge_text = "⚠️ Terlambat"
                     else:
                         badge_color = "#3b82f6"
@@ -294,7 +291,15 @@ if menu == "🔍 Katalog Buku":
                     st.markdown(html_card, unsafe_allow_html=True)
                     st.markdown(f"<div style='text-align: center; margin-top: 15px; margin-bottom: 2px;'><strong style='font-size: 1rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; line-height: 1.2;' title='{row['Judul Buku']}'>{row['Judul Buku']}</strong></div>", unsafe_allow_html=True)
                     st.markdown(f"<div style='text-align: center; color: #64748b; font-size: 0.85rem; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' title='{row['Pengarang']}'>✍️ {row['Pengarang']}</div>", unsafe_allow_html=True)
-                    st.markdown(f"<div style='text-align: center; font-size: 0.75rem; background-color: #f1f5f9; padding: 4px 8px; border-radius: 6px; color: #475569; border: 1px solid #e2e8f0;'>📚 {row['Kategori']} &nbsp;|&nbsp; 🗓️ {row['Tahun']}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='text-align: center; font-size: 0.75rem; background-color: #f1f5f9; padding: 4px 8px; border-radius: 6px; color: #475569; border: 1px solid #e2e8f0; margin-bottom: 10px;'>📚 {row['Kategori']} &nbsp;|&nbsp; 🗓️ {row['Tahun']}</div>", unsafe_allow_html=True)
+                    
+                    # PERUBAHAN: Menambahkan expander untuk melihat Ringkasan
+                    with st.expander("📖 Lihat Ringkasan"):
+                        desc = row['Deskripsi']
+                        if pd.notna(desc) and desc.strip() != "":
+                            st.caption(desc)
+                        else:
+                            st.caption("*Belum ada deskripsi untuk buku ini.*")
 
 # ------------------------------------------
 # MENU: AREA SISWA
@@ -353,7 +358,8 @@ elif menu == "🧑 Area Siswa":
             st.markdown("Pilih dan klik tombol pinjam pada buku yang ingin Anda baca.")
             st.write("")
             
-            df_ready = pd.read_sql_query("SELECT id_buku, cover_url, judul, pengarang FROM buku WHERE status='Tersedia'", conn)
+            # PERUBAHAN: Menambahkan b.deskripsi untuk ditampilkan di etalase siswa jika diperlukan
+            df_ready = pd.read_sql_query("SELECT id_buku, cover_url, judul, pengarang, deskripsi FROM buku WHERE status='Tersedia'", conn)
             
             if df_ready.empty:
                 st.info("Koleksi saat ini sedang kosong atau semua buku sedang dipinjam.")
@@ -477,7 +483,7 @@ elif menu == "🔒 Area Petugas (Admin)":
                         df_waktu['Jumlah'] = 1
                         st.line_chart(df_waktu.groupby('tanggal_pinjam').sum(), y_label="Total Transaksi")
 
-        # TAB 1: PERSETUJUAN (DENGAN KALKULASI JATUH TEMPO & DENDA OTOMATIS)
+        # TAB 1: PERSETUJUAN
         with tab1:
             col_p, col_k = st.columns(2)
             
@@ -497,7 +503,6 @@ elif menu == "🔒 Area Petugas (Admin)":
                     id_b = int(df_app_p[df_app_p['id_pinjam'] == id_p]['id_buku'].values[0])
                     
                     if bp1.button("✅ Setujui", use_container_width=True):
-                        # PERUBAHAN: Set tanggal pinjam sekarang dan kalkulasi otomatis jatuh tempo (+7 Hari)
                         tgl_sekarang = datetime.now().strftime("%Y-%m-%d")
                         tgl_jt = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
                         
@@ -517,7 +522,7 @@ elif menu == "🔒 Area Petugas (Admin)":
                 else:
                     st.info("Tidak ada pengajuan pinjam baru.")
                     
-            # SUB-KOLOM 2: Proses Validasi Kembali (Kalkulasi Denda Otomatis)
+            # SUB-KOLOM 2: Proses Validasi Kembali
             with col_k:
                 st.markdown("#### 📤 Validasi Pengembalian")
                 q_app_kembali = "SELECT p.id_pinjam, p.id_buku, b.judul, s.nama as nama_siswa, p.tanggal_jatuh_tempo FROM peminjaman p JOIN buku b ON p.id_buku = b.id_buku JOIN siswa s ON p.username_siswa = s.username WHERE p.status_pinjam = 'Menunggu Pengembalian'"
@@ -533,7 +538,6 @@ elif menu == "🔒 Area Petugas (Admin)":
                     tgl_jatuh_tempo_str = row_sel['tanggal_jatuh_tempo']
                     id_bk = int(row_sel['id_buku'])
                     
-                    # LOGIKA HITUNG DENDA OTOMATIS
                     hitung_denda = 0
                     if tgl_jatuh_tempo_str:
                         jt_date = datetime.strptime(tgl_jatuh_tempo_str, "%Y-%m-%d").date()
@@ -569,6 +573,9 @@ elif menu == "🔒 Area Petugas (Admin)":
                         input_pengarang = st.text_input("Nama Pengarang/Penulis")
                         input_tahun = st.number_input("Tahun Terbit", min_value=1900, max_value=datetime.now().year, value=datetime.now().year, step=1)
                         input_file = st.file_uploader("Upload Sampul Gambar", type=['png', 'jpg', 'jpeg'])
+                        
+                    # PERUBAHAN: Menambahkan Text Area untuk Input Deskripsi Buku
+                    input_deskripsi = st.text_area("Deskripsi / Ringkasan Buku (Opsional)", height=100)
                     
                     if st.form_submit_button("Simpan ke Katalog", use_container_width=True):
                         if not input_judul or not input_pengarang:
@@ -578,9 +585,10 @@ elif menu == "🔒 Area Petugas (Admin)":
                             if input_file:
                                 b64_encoded = base64.b64encode(input_file.getvalue()).decode()
                                 final_cover = f"data:{input_file.type};base64,{b64_encoded}"
-                                
-                            conn.execute("INSERT INTO buku (cover_url, judul, pengarang, kategori, tahun, status) VALUES (?, ?, ?, ?, ?, ?)",
-                                      (final_cover, input_judul, input_pengarang, input_kategori, input_tahun, input_status))
+                            
+                            # PERUBAHAN: Query INSERT disesuaikan agar bisa menyimpan deskripsi
+                            conn.execute("INSERT INTO buku (cover_url, judul, pengarang, kategori, tahun, status, deskripsi) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                      (final_cover, input_judul, input_pengarang, input_kategori, input_tahun, input_status, input_deskripsi))
                             conn.commit()
                             st.toast(f"Buku '{input_judul}' didaftarkan!", icon="🎉")
                             time.sleep(1.5)
@@ -590,7 +598,9 @@ elif menu == "🔒 Area Petugas (Admin)":
         with tab3:
             st.markdown("#### 📊 Tabel Manajemen Database Utama")
             st.caption("Anda dapat mengubah data langsung pada tabel di bawah (kecuali ID & Base64 Sampul). Klik 'Simpan Perubahan' setelah selesai.")
-            df_edit = pd.read_sql_query("SELECT id_buku, cover_url, judul, pengarang, kategori, tahun, status FROM buku", conn)
+            
+            # PERUBAHAN: Select mengambil field deskripsi untuk diedit oleh admin
+            df_edit = pd.read_sql_query("SELECT id_buku, cover_url, judul, pengarang, kategori, tahun, status, deskripsi FROM buku", conn)
             
             edited_df = st.data_editor(
                 df_edit,
@@ -602,6 +612,7 @@ elif menu == "🔒 Area Petugas (Admin)":
                     "cover_url": st.column_config.TextColumn("Data Sampul (Base64)", disabled=True),
                     "judul": "Judul Buku",
                     "pengarang": "Pengarang",
+                    "deskripsi": "Deskripsi/Ringkasan", # PERUBAHAN: Ditambahkan ke Editor
                     "status": st.column_config.SelectboxColumn("Status", options=["Tersedia", "Dipinjam", "Menunggu Approval"], required=True)
                 }
             )
@@ -610,8 +621,9 @@ elif menu == "🔒 Area Petugas (Admin)":
                 c = conn.cursor()
                 c.execute("DELETE FROM buku")
                 for _, row in edited_df.iterrows():
-                    c.execute("INSERT INTO buku (id_buku, cover_url, judul, pengarang, kategori, tahun, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                              (row['id_buku'], row['cover_url'], row['judul'], row['pengarang'], row['kategori'], row['tahun'], row['status']))
+                    # PERUBAHAN: Query di update untuk menulis ulang field deskripsi
+                    c.execute("INSERT INTO buku (id_buku, cover_url, judul, pengarang, kategori, tahun, status, deskripsi) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                              (row['id_buku'], row['cover_url'], row['judul'], row['pengarang'], row['kategori'], row['tahun'], row['status'], row['deskripsi']))
                 conn.commit()
                 st.toast("Basis data berhasil diperbarui!", icon="✅")
                 time.sleep(1)
